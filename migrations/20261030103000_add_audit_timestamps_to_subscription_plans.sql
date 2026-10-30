@@ -1,0 +1,9 @@
+-- migrate:up
+ALTER TABLE subscription_plans
+    ADD COLUMN IF NOT EXISTS created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;
+
+-- migrate:down
+ALTER TABLE subscription_plans
+    DROP COLUMN IF EXISTS created_at,
+    DROP COLUMN IF EXISTS updated_at;

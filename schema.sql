@@ -16,6 +16,20 @@ SET client_min_messages = warning;
 SET row_security = off;
 
 --
+-- Name: pgcrypto; Type: EXTENSION; Schema: -; Owner: -
+--
+
+CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA public;
+
+
+--
+-- Name: EXTENSION pgcrypto; Type: COMMENT; Schema: -; Owner: -
+--
+
+COMMENT ON EXTENSION pgcrypto IS 'cryptographic functions';
+
+
+--
 -- Name: uuid-ossp; Type: EXTENSION; Schema: -; Owner: -
 --
 
@@ -36,7 +50,8 @@ COMMENT ON EXTENSION "uuid-ossp" IS 'generate universally unique identifiers (UU
 CREATE TYPE public.account_status AS ENUM (
     'PENDING_VERIFICATION',
     'ACTIVE',
-    'SUSPENDED'
+    'SUSPENDED',
+    'PENDING_EMAIL_VERIFICATION'
 );
 
 
@@ -71,7 +86,8 @@ CREATE TYPE public.payment_method AS ENUM (
     'PAGO_MOVIL',
     'BINANCE_PAY',
     'ZINLI_WALLY_ZELLE',
-    'STRIPE'
+    'STRIPE',
+    'DISCOUNT_CODE'
 );
 
 
@@ -133,6 +149,30 @@ CREATE TYPE public.video_status AS ENUM (
 );
 
 
+--
+-- Name: uuid_generate_v7(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.uuid_generate_v7() RETURNS uuid
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    unix_time_ms bytea;
+    uuid_bytes bytea;
+BEGIN
+    -- 6 bytes (48 bits) conteniendo la marca de tiempo Unix epoch en milisegundos
+    unix_time_ms := substring(int8send(floor(extract(epoch from clock_timestamp()) * 1000)::bigint) from 3 for 6);
+    -- 10 bytes pseudoaleatorios criptográficos para completar los 16 bytes (128 bits)
+    uuid_bytes := unix_time_ms || gen_random_bytes(10);
+    -- Establecer la versión 7 (0111xxxx) en el byte 7 (índice 6 base 0)
+    uuid_bytes := set_byte(uuid_bytes, 6, (get_byte(uuid_bytes, 6) & 15) | 112);
+    -- Establecer la variante RFC 4122/9562 (10xxxxxx) en el byte 9 (índice 8 base 0)
+    uuid_bytes := set_byte(uuid_bytes, 8, (get_byte(uuid_bytes, 8) & 63) | 128);
+    RETURN encode(uuid_bytes, 'hex')::uuid;
+END;
+$$;
+
+
 SET default_tablespace = '';
 
 SET default_table_access_method = heap;
@@ -142,7 +182,7 @@ SET default_table_access_method = heap;
 --
 
 CREATE TABLE public.athlete_badges (
-    id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
+    id uuid DEFAULT public.uuid_generate_v7() NOT NULL,
     athlete_id uuid NOT NULL,
     badge_type public.badge_type NOT NULL,
     organization_id uuid,
@@ -160,7 +200,7 @@ CREATE TABLE public.athlete_badges (
 --
 
 CREATE TABLE public.athlete_subscriptions (
-    id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
+    id uuid DEFAULT public.uuid_generate_v7() NOT NULL,
     athlete_id uuid NOT NULL,
     plan_id character varying(50) NOT NULL,
     start_date timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
@@ -175,7 +215,7 @@ CREATE TABLE public.athlete_subscriptions (
 --
 
 CREATE TABLE public.athlete_videos (
-    id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
+    id uuid DEFAULT public.uuid_generate_v7() NOT NULL,
     athlete_id uuid NOT NULL,
     title character varying(150) NOT NULL,
     category character varying(50) DEFAULT 'HIGHLIGHTS'::character varying NOT NULL,
@@ -194,7 +234,7 @@ CREATE TABLE public.athlete_videos (
 --
 
 CREATE TABLE public.athletes (
-    id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
+    id uuid DEFAULT public.uuid_generate_v7() NOT NULL,
     tutor_id uuid NOT NULL,
     first_name character varying(100) NOT NULL,
     last_name character varying(100) NOT NULL,
@@ -214,7 +254,44 @@ CREATE TABLE public.athletes (
     slug character varying(120) NOT NULL,
     is_public boolean DEFAULT true NOT NULL,
     created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
-    updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP
+    updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
+    identity_document_type character varying(30),
+    identity_document_number character varying(50),
+    identity_document_file_url character varying(500),
+    legal_verification_status character varying(30) DEFAULT 'PENDING_REVIEW'::character varying NOT NULL,
+    legal_verification_notes text,
+    legal_verified_by uuid,
+    legal_verified_at timestamp with time zone
+);
+
+
+--
+-- Name: certification_requests; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.certification_requests (
+    id uuid DEFAULT public.uuid_generate_v7() NOT NULL,
+    athlete_id uuid NOT NULL,
+    badge_type public.badge_type NOT NULL,
+    request_method character varying(30) NOT NULL,
+    status character varying(30) DEFAULT 'PENDING'::character varying NOT NULL,
+    title character varying(150) NOT NULL,
+    description text,
+    evidence_document_url text,
+    reviewed_by_admin_id uuid,
+    target_email character varying(150),
+    target_name character varying(150),
+    target_organization character varying(150),
+    token_hash character varying(255),
+    token_expires_at timestamp with time zone,
+    certifier_full_name character varying(150),
+    certifier_license_id character varying(100),
+    certifier_notes text,
+    certifier_ip character varying(50),
+    certification_data_json text,
+    completed_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
+    badge_id uuid
 );
 
 
@@ -223,7 +300,7 @@ CREATE TABLE public.athletes (
 --
 
 CREATE TABLE public.clubs_organizations (
-    id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
+    id uuid DEFAULT public.uuid_generate_v7() NOT NULL,
     name character varying(150) NOT NULL,
     federation_code character varying(50),
     city character varying(100) NOT NULL,
@@ -236,11 +313,100 @@ CREATE TABLE public.clubs_organizations (
 
 
 --
+-- Name: discount_code_redemptions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.discount_code_redemptions (
+    id uuid DEFAULT public.uuid_generate_v7() NOT NULL,
+    discount_code_id uuid NOT NULL,
+    user_id uuid NOT NULL,
+    athlete_id uuid NOT NULL,
+    payment_transaction_id uuid,
+    original_amount_usd numeric(10,2) NOT NULL,
+    discounted_amount_usd numeric(10,2) NOT NULL,
+    final_amount_usd numeric(10,2) NOT NULL,
+    redeemed_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP
+);
+
+
+--
+-- Name: discount_codes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.discount_codes (
+    id uuid DEFAULT public.uuid_generate_v7() NOT NULL,
+    code character varying(50) NOT NULL,
+    description character varying(255),
+    discount_type character varying(20) NOT NULL,
+    discount_value numeric(10,2) NOT NULL,
+    organization_id uuid,
+    applicable_plan_id character varying(50),
+    max_uses integer,
+    current_uses integer DEFAULT 0 NOT NULL,
+    one_use_per_athlete boolean DEFAULT true NOT NULL,
+    starts_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
+    expires_at timestamp with time zone,
+    is_active boolean DEFAULT true NOT NULL,
+    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
+    updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP
+);
+
+
+--
+-- Name: email_verification_tokens; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.email_verification_tokens (
+    id uuid DEFAULT public.uuid_generate_v7() NOT NULL,
+    user_id uuid NOT NULL,
+    token character varying(255) NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    used_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP
+);
+
+
+--
+-- Name: password_reset_tokens; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.password_reset_tokens (
+    id uuid DEFAULT public.uuid_generate_v7() NOT NULL,
+    user_id uuid NOT NULL,
+    token character varying(255) NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    used_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP
+);
+
+
+--
+-- Name: payment_gateway_settings; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.payment_gateway_settings (
+    id uuid DEFAULT public.uuid_generate_v7() NOT NULL,
+    pago_movil_enabled boolean DEFAULT true NOT NULL,
+    pago_movil_bank character varying(100) NOT NULL,
+    pago_movil_phone character varying(50) NOT NULL,
+    pago_movil_id_number character varying(50) NOT NULL,
+    pago_movil_account_holder character varying(150) NOT NULL,
+    binance_manual_enabled boolean DEFAULT true NOT NULL,
+    binance_pay_id character varying(50),
+    binance_wallet_address character varying(150),
+    binance_network character varying(50) DEFAULT 'USDT (TRC-20 / BEP-20)'::character varying,
+    binance_qr_image_url character varying(255),
+    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
+    updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP
+);
+
+
+--
 -- Name: payment_transactions; Type: TABLE; Schema: public; Owner: -
 --
 
 CREATE TABLE public.payment_transactions (
-    id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
+    id uuid DEFAULT public.uuid_generate_v7() NOT NULL,
     user_id uuid NOT NULL,
     athlete_id uuid NOT NULL,
     plan_id character varying(50) NOT NULL,
@@ -254,7 +420,14 @@ CREATE TABLE public.payment_transactions (
     audited_by_admin_id uuid,
     audited_at timestamp with time zone,
     rejection_reason text,
-    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP
+    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
+    payment_date date DEFAULT CURRENT_DATE,
+    origin_bank character varying(100),
+    origin_phone character varying(30),
+    gateway_order_id character varying(100),
+    raw_webhook_payload text,
+    discount_code_id uuid,
+    discount_amount_usd numeric(10,2) DEFAULT 0.00
 );
 
 
@@ -263,7 +436,7 @@ CREATE TABLE public.payment_transactions (
 --
 
 CREATE TABLE public.schema_migrations (
-    version character varying(255) NOT NULL
+    version character varying NOT NULL
 );
 
 
@@ -272,7 +445,7 @@ CREATE TABLE public.schema_migrations (
 --
 
 CREATE TABLE public.scout_activity_logs (
-    id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
+    id uuid DEFAULT public.uuid_generate_v7() NOT NULL,
     scout_id uuid NOT NULL,
     athlete_id uuid NOT NULL,
     video_id uuid,
@@ -286,7 +459,7 @@ CREATE TABLE public.scout_activity_logs (
 --
 
 CREATE TABLE public.scout_profiles (
-    id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
+    id uuid DEFAULT public.uuid_generate_v7() NOT NULL,
     user_id uuid NOT NULL,
     organization_name character varying(150) NOT NULL,
     scout_role character varying(100) NOT NULL,
@@ -312,7 +485,9 @@ CREATE TABLE public.subscription_plans (
     max_videos integer DEFAULT 1 NOT NULL,
     has_radar_views boolean DEFAULT false NOT NULL,
     has_pdf_cv boolean DEFAULT false NOT NULL,
-    is_active boolean DEFAULT true NOT NULL
+    is_active boolean DEFAULT true NOT NULL,
+    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
+    updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP
 );
 
 
@@ -321,13 +496,30 @@ CREATE TABLE public.subscription_plans (
 --
 
 CREATE TABLE public.tutor_legal_consents (
-    id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
+    id uuid DEFAULT public.uuid_generate_v7() NOT NULL,
     tutor_id uuid NOT NULL,
     accepted_lopnna_terms boolean DEFAULT true NOT NULL,
     terms_version character varying(20) DEFAULT '1.0'::character varying NOT NULL,
     ip_address character varying(45) NOT NULL,
     user_agent text NOT NULL,
-    accepted_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP
+    accepted_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
+    id_document_type character varying(30),
+    id_document_number character varying(50),
+    id_document_file_url character varying(500)
+);
+
+
+--
+-- Name: user_social_identities; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.user_social_identities (
+    id uuid DEFAULT public.uuid_generate_v7() NOT NULL,
+    user_id uuid NOT NULL,
+    provider character varying(50) NOT NULL,
+    provider_user_id character varying(255) NOT NULL,
+    provider_email character varying(255) NOT NULL,
+    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
 
 
@@ -336,7 +528,7 @@ CREATE TABLE public.tutor_legal_consents (
 --
 
 CREATE TABLE public.users (
-    id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
+    id uuid DEFAULT public.uuid_generate_v7() NOT NULL,
     email character varying(255) NOT NULL,
     password_hash character varying(255) NOT NULL,
     full_name character varying(150) NOT NULL,
@@ -344,7 +536,11 @@ CREATE TABLE public.users (
     role public.user_role DEFAULT 'TUTOR'::public.user_role NOT NULL,
     status public.account_status DEFAULT 'ACTIVE'::public.account_status NOT NULL,
     created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
-    updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP
+    updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
+    is_profile_completed boolean DEFAULT true NOT NULL,
+    country character varying(100),
+    state character varying(100),
+    address character varying(255)
 );
 
 
@@ -353,7 +549,7 @@ CREATE TABLE public.users (
 --
 
 CREATE TABLE public.verifier_delegates (
-    id uuid DEFAULT public.uuid_generate_v4() NOT NULL,
+    id uuid DEFAULT public.uuid_generate_v7() NOT NULL,
     user_id uuid NOT NULL,
     organization_id uuid NOT NULL,
     position_title character varying(100) NOT NULL,
@@ -403,11 +599,91 @@ ALTER TABLE ONLY public.athletes
 
 
 --
+-- Name: certification_requests certification_requests_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.certification_requests
+    ADD CONSTRAINT certification_requests_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: certification_requests certification_requests_token_hash_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.certification_requests
+    ADD CONSTRAINT certification_requests_token_hash_key UNIQUE (token_hash);
+
+
+--
 -- Name: clubs_organizations clubs_organizations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.clubs_organizations
     ADD CONSTRAINT clubs_organizations_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: discount_code_redemptions discount_code_redemptions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.discount_code_redemptions
+    ADD CONSTRAINT discount_code_redemptions_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: discount_codes discount_codes_code_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.discount_codes
+    ADD CONSTRAINT discount_codes_code_key UNIQUE (code);
+
+
+--
+-- Name: discount_codes discount_codes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.discount_codes
+    ADD CONSTRAINT discount_codes_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: email_verification_tokens email_verification_tokens_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.email_verification_tokens
+    ADD CONSTRAINT email_verification_tokens_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: email_verification_tokens email_verification_tokens_token_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.email_verification_tokens
+    ADD CONSTRAINT email_verification_tokens_token_key UNIQUE (token);
+
+
+--
+-- Name: password_reset_tokens password_reset_tokens_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.password_reset_tokens
+    ADD CONSTRAINT password_reset_tokens_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: password_reset_tokens password_reset_tokens_token_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.password_reset_tokens
+    ADD CONSTRAINT password_reset_tokens_token_key UNIQUE (token);
+
+
+--
+-- Name: payment_gateway_settings payment_gateway_settings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.payment_gateway_settings
+    ADD CONSTRAINT payment_gateway_settings_pkey PRIMARY KEY (id);
 
 
 --
@@ -475,6 +751,30 @@ ALTER TABLE ONLY public.verifier_delegates
 
 
 --
+-- Name: user_social_identities uq_social_identity_provider_uid; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.user_social_identities
+    ADD CONSTRAINT uq_social_identity_provider_uid UNIQUE (provider, provider_user_id);
+
+
+--
+-- Name: user_social_identities uq_social_identity_user_provider; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.user_social_identities
+    ADD CONSTRAINT uq_social_identity_user_provider UNIQUE (user_id, provider);
+
+
+--
+-- Name: user_social_identities user_social_identities_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.user_social_identities
+    ADD CONSTRAINT user_social_identities_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: users users_email_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -506,6 +806,13 @@ CREATE INDEX idx_athletes_filter ON public.athletes USING btree (birth_date, pri
 
 
 --
+-- Name: idx_athletes_legal_verification_status; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_athletes_legal_verification_status ON public.athletes USING btree (legal_verification_status);
+
+
+--
 -- Name: idx_athletes_slug; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -520,10 +827,129 @@ CREATE INDEX idx_badges_athlete ON public.athlete_badges USING btree (athlete_id
 
 
 --
+-- Name: idx_cert_req_athlete; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_cert_req_athlete ON public.certification_requests USING btree (athlete_id, status);
+
+
+--
+-- Name: idx_cert_req_status; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_cert_req_status ON public.certification_requests USING btree (status);
+
+
+--
+-- Name: idx_cert_req_token; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_cert_req_token ON public.certification_requests USING btree (token_hash);
+
+
+--
+-- Name: idx_discount_codes_active; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_discount_codes_active ON public.discount_codes USING btree (is_active);
+
+
+--
+-- Name: idx_discount_codes_code; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_discount_codes_code ON public.discount_codes USING btree (code);
+
+
+--
+-- Name: idx_discount_codes_org; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_discount_codes_org ON public.discount_codes USING btree (organization_id);
+
+
+--
+-- Name: idx_email_verification_tokens_token; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_email_verification_tokens_token ON public.email_verification_tokens USING btree (token);
+
+
+--
+-- Name: idx_email_verification_tokens_user_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_email_verification_tokens_user_id ON public.email_verification_tokens USING btree (user_id);
+
+
+--
+-- Name: idx_password_reset_tokens_token; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_password_reset_tokens_token ON public.password_reset_tokens USING btree (token);
+
+
+--
+-- Name: idx_password_reset_tokens_user_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_password_reset_tokens_user_id ON public.password_reset_tokens USING btree (user_id);
+
+
+--
+-- Name: idx_payment_transactions_reference_unique; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX idx_payment_transactions_reference_unique ON public.payment_transactions USING btree (reference_number) WHERE ((reference_number IS NOT NULL) AND ((reference_number)::text <> ''::text));
+
+
+--
+-- Name: idx_payment_tx_gateway_order; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_payment_tx_gateway_order ON public.payment_transactions USING btree (gateway_order_id);
+
+
+--
+-- Name: idx_payment_tx_method_status; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_payment_tx_method_status ON public.payment_transactions USING btree (method, status);
+
+
+--
+-- Name: idx_redemptions_code_athlete; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_redemptions_code_athlete ON public.discount_code_redemptions USING btree (discount_code_id, athlete_id);
+
+
+--
+-- Name: idx_redemptions_user; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_redemptions_user ON public.discount_code_redemptions USING btree (user_id);
+
+
+--
 -- Name: idx_scout_activity; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX idx_scout_activity ON public.scout_activity_logs USING btree (athlete_id, created_at DESC);
+
+
+--
+-- Name: idx_user_social_identities_provider_email; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_user_social_identities_provider_email ON public.user_social_identities USING btree (provider_email);
+
+
+--
+-- Name: idx_user_social_identities_user_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_user_social_identities_user_id ON public.user_social_identities USING btree (user_id);
 
 
 --
@@ -590,11 +1016,107 @@ ALTER TABLE ONLY public.athletes
 
 
 --
+-- Name: athletes athletes_legal_verified_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.athletes
+    ADD CONSTRAINT athletes_legal_verified_by_fkey FOREIGN KEY (legal_verified_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
 -- Name: athletes athletes_tutor_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.athletes
     ADD CONSTRAINT athletes_tutor_id_fkey FOREIGN KEY (tutor_id) REFERENCES public.users(id) ON DELETE CASCADE;
+
+
+--
+-- Name: certification_requests certification_requests_athlete_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.certification_requests
+    ADD CONSTRAINT certification_requests_athlete_id_fkey FOREIGN KEY (athlete_id) REFERENCES public.athletes(id) ON DELETE CASCADE;
+
+
+--
+-- Name: certification_requests certification_requests_badge_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.certification_requests
+    ADD CONSTRAINT certification_requests_badge_id_fkey FOREIGN KEY (badge_id) REFERENCES public.athlete_badges(id) ON DELETE SET NULL;
+
+
+--
+-- Name: certification_requests certification_requests_reviewed_by_admin_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.certification_requests
+    ADD CONSTRAINT certification_requests_reviewed_by_admin_id_fkey FOREIGN KEY (reviewed_by_admin_id) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: discount_code_redemptions discount_code_redemptions_athlete_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.discount_code_redemptions
+    ADD CONSTRAINT discount_code_redemptions_athlete_id_fkey FOREIGN KEY (athlete_id) REFERENCES public.athletes(id) ON DELETE CASCADE;
+
+
+--
+-- Name: discount_code_redemptions discount_code_redemptions_discount_code_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.discount_code_redemptions
+    ADD CONSTRAINT discount_code_redemptions_discount_code_id_fkey FOREIGN KEY (discount_code_id) REFERENCES public.discount_codes(id) ON DELETE CASCADE;
+
+
+--
+-- Name: discount_code_redemptions discount_code_redemptions_payment_transaction_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.discount_code_redemptions
+    ADD CONSTRAINT discount_code_redemptions_payment_transaction_id_fkey FOREIGN KEY (payment_transaction_id) REFERENCES public.payment_transactions(id) ON DELETE SET NULL;
+
+
+--
+-- Name: discount_code_redemptions discount_code_redemptions_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.discount_code_redemptions
+    ADD CONSTRAINT discount_code_redemptions_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
+
+
+--
+-- Name: discount_codes discount_codes_applicable_plan_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.discount_codes
+    ADD CONSTRAINT discount_codes_applicable_plan_id_fkey FOREIGN KEY (applicable_plan_id) REFERENCES public.subscription_plans(id) ON DELETE SET NULL;
+
+
+--
+-- Name: discount_codes discount_codes_organization_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.discount_codes
+    ADD CONSTRAINT discount_codes_organization_id_fkey FOREIGN KEY (organization_id) REFERENCES public.clubs_organizations(id) ON DELETE SET NULL;
+
+
+--
+-- Name: email_verification_tokens email_verification_tokens_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.email_verification_tokens
+    ADD CONSTRAINT email_verification_tokens_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
+
+
+--
+-- Name: password_reset_tokens password_reset_tokens_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.password_reset_tokens
+    ADD CONSTRAINT password_reset_tokens_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
 
 
 --
@@ -611,6 +1133,14 @@ ALTER TABLE ONLY public.payment_transactions
 
 ALTER TABLE ONLY public.payment_transactions
     ADD CONSTRAINT payment_transactions_audited_by_admin_id_fkey FOREIGN KEY (audited_by_admin_id) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: payment_transactions payment_transactions_discount_code_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.payment_transactions
+    ADD CONSTRAINT payment_transactions_discount_code_id_fkey FOREIGN KEY (discount_code_id) REFERENCES public.discount_codes(id) ON DELETE SET NULL;
 
 
 --
@@ -678,6 +1208,14 @@ ALTER TABLE ONLY public.tutor_legal_consents
 
 
 --
+-- Name: user_social_identities user_social_identities_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.user_social_identities
+    ADD CONSTRAINT user_social_identities_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
+
+
+--
 -- Name: verifier_delegates verifier_delegates_organization_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -705,4 +1243,18 @@ ALTER TABLE ONLY public.verifier_delegates
 --
 
 INSERT INTO public.schema_migrations (version) VALUES
-    ('20260929171117');
+    ('20260929171117'),
+    ('20261009120000'),
+    ('20261010150000'),
+    ('20261010153000'),
+    ('20261010183000'),
+    ('20261010190000'),
+    ('20261011120000'),
+    ('20261013140000'),
+    ('20261013150000'),
+    ('20261015220000'),
+    ('20261019180000'),
+    ('20261026190000'),
+    ('20261027120000'),
+    ('20261027150000'),
+    ('20261030103000');
