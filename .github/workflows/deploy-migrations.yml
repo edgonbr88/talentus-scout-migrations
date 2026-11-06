@@ -1,0 +1,37 @@
+name: Deploy Migrations to Neon (Production)
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - 'migrations/**'
+      - '.github/workflows/deploy-migrations.yml'
+  workflow_dispatch:
+
+jobs:
+  migrate:
+    name: Run dbmate migrations
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install dbmate
+        run: |
+          sudo curl -fsSL -o /usr/local/bin/dbmate https://github.com/amacneil/dbmate/releases/latest/download/dbmate-linux-amd64
+          sudo chmod +x /usr/local/bin/dbmate
+
+      - name: Check pending migrations
+        env:
+          DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
+        run: |
+          dbmate --migrations-dir ./migrations status
+
+      - name: Apply migrations
+        env:
+          DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
+        run: |
+          dbmate --migrations-dir ./migrations up
