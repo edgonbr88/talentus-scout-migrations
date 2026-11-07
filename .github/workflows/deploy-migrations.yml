@@ -1,0 +1,53 @@
+name: Deploy Migrations to Neon (Production)
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'migrations/**'
+      - '.github/workflows/deploy-migrations.yml'
+  workflow_dispatch:
+
+jobs:
+  migrate:
+    name: Run dbmate migrations on Neon
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install dbmate
+        run: |
+          sudo curl -fsSL -o /usr/local/bin/dbmate https://github.com/amacneil/dbmate/releases/latest/download/dbmate-linux-amd64
+          sudo chmod +x /usr/local/bin/dbmate
+          dbmate --version
+
+      - name: Configure Database URL and Apply Migrations
+        env:
+          RAW_DATABASE_URL: ${{ secrets.NEON_DATABASE_URL || secrets.NEON_DIRECT_DATABASE_URL }}
+        run: |
+          if [ -z "$RAW_DATABASE_URL" ]; then
+            echo "::error::Neither NEON_DATABASE_URL nor NEON_DIRECT_DATABASE_URL secret is defined."
+            exit 1
+          fi
+
+          DB_URL="$RAW_DATABASE_URL"
+          if [[ "$DB_URL" != *"options=endpoint"* ]] && [[ "$DB_URL" =~ @(ep-[^.]+)\. ]]; then
+            ENDPOINT_ID="${BASH_REMATCH[1]}"
+            if [[ "$DB_URL" == *"?"* ]]; then
+              DB_URL="${DB_URL}&options=endpoint%3D${ENDPOINT_ID}"
+            else
+              DB_URL="${DB_URL}?options=endpoint%3D${ENDPOINT_ID}"
+            fi
+          fi
+
+          echo "=== 1. Estado inicial de migraciones en Neon ==="
+          DATABASE_URL="$DB_URL" dbmate -d migrations status
+
+          echo "=== 2. Aplicando migraciones pendientes en Neon ==="
+          DATABASE_URL="$DB_URL" dbmate -d migrations --no-dump-schema up
+
+          echo "=== 3. Estado final de migraciones en Neon ==="
+          DATABASE_URL="$DB_URL" dbmate -d migrations status
