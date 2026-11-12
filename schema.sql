@@ -549,7 +549,8 @@ CREATE TABLE public.scout_profiles (
     terms_version character varying(20) DEFAULT '1.0'::character varying NOT NULL,
     terms_accepted_at timestamp with time zone,
     terms_ip_address character varying(45),
-    terms_user_agent text
+    terms_user_agent text,
+    bulk_import_enabled boolean DEFAULT false NOT NULL
 );
 
 
@@ -1467,4 +1468,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261106140000'),
     ('20261106220000'),
     ('20261109120000'),
-    ('20261112092325');
+    ('20261112092325'),
+    ('20261112111949');
