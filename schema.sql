@@ -79,6 +79,29 @@ CREATE TYPE public.badge_type AS ENUM (
 
 
 --
+-- Name: bulk_import_source_type; Type: TYPE; Schema: public; Owner: -
+--
+
+CREATE TYPE public.bulk_import_source_type AS ENUM (
+    'FILE_EXCEL',
+    'FILE_CSV',
+    'GOOGLE_SHEET'
+);
+
+
+--
+-- Name: bulk_import_status; Type: TYPE; Schema: public; Owner: -
+--
+
+CREATE TYPE public.bulk_import_status AS ENUM (
+    'PENDING',
+    'PROCESSING',
+    'COMPLETED',
+    'FAILED'
+);
+
+
+--
 -- Name: payment_method; Type: TYPE; Schema: public; Owner: -
 --
 
@@ -87,7 +110,8 @@ CREATE TYPE public.payment_method AS ENUM (
     'BINANCE_PAY',
     'ZINLI_WALLY_ZELLE',
     'STRIPE',
-    'DISCOUNT_CODE'
+    'DISCOUNT_CODE',
+    'ZELLE'
 );
 
 
@@ -133,7 +157,8 @@ CREATE TYPE public.user_role AS ENUM (
     'TUTOR',
     'SCOUT',
     'VERIFIER_ORG',
-    'ADMIN'
+    'ADMIN',
+    'ATHLETE'
 );
 
 
@@ -192,6 +217,23 @@ CREATE TABLE public.athlete_badges (
     verification_notes text,
     verified_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP
+);
+
+
+--
+-- Name: athlete_legal_consents; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.athlete_legal_consents (
+    id uuid DEFAULT public.uuid_generate_v7() NOT NULL,
+    athlete_id uuid NOT NULL,
+    user_id uuid NOT NULL,
+    accepted_terms boolean DEFAULT true NOT NULL,
+    accepted_institutional_diffusion boolean DEFAULT true NOT NULL,
+    terms_version character varying(20) DEFAULT '1.0'::character varying NOT NULL,
+    ip_address character varying(45) NOT NULL,
+    user_agent text NOT NULL,
+    accepted_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP
 );
 
 
@@ -261,7 +303,32 @@ CREATE TABLE public.athletes (
     legal_verification_status character varying(30) DEFAULT 'PENDING_REVIEW'::character varying NOT NULL,
     legal_verification_notes text,
     legal_verified_by uuid,
-    legal_verified_at timestamp with time zone
+    legal_verified_at timestamp with time zone,
+    deleted_at timestamp with time zone
+);
+
+
+--
+-- Name: bulk_import_jobs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.bulk_import_jobs (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    scout_id uuid NOT NULL,
+    club_id uuid,
+    organization_name character varying(150) NOT NULL,
+    source_type public.bulk_import_source_type NOT NULL,
+    file_name character varying(255),
+    sheet_id character varying(255),
+    status public.bulk_import_status DEFAULT 'PENDING'::public.bulk_import_status NOT NULL,
+    total_rows integer DEFAULT 0 NOT NULL,
+    processed_rows integer DEFAULT 0 NOT NULL,
+    successful_rows integer DEFAULT 0 NOT NULL,
+    failed_rows integer DEFAULT 0 NOT NULL,
+    error_summary text,
+    error_report_json jsonb,
+    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
+    updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP
 );
 
 
@@ -397,7 +464,11 @@ CREATE TABLE public.payment_gateway_settings (
     binance_network character varying(50) DEFAULT 'USDT (TRC-20 / BEP-20)'::character varying,
     binance_qr_image_url character varying(255),
     created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
-    updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP
+    updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
+    zelle_enabled boolean DEFAULT true NOT NULL,
+    zelle_email character varying(150) DEFAULT 'pagos@talentusscout.com'::character varying,
+    zelle_account_holder character varying(150) DEFAULT 'Talentus Scout LLC'::character varying,
+    zelle_qr_image_url character varying(255)
 );
 
 
@@ -469,7 +540,16 @@ CREATE TABLE public.scout_profiles (
     reviewed_by_admin_id uuid,
     reviewed_at timestamp with time zone,
     rejection_reason text,
-    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP
+    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
+    id_document_type character varying(30),
+    id_document_number character varying(50),
+    id_document_url text,
+    selfie_url text,
+    accepted_terms boolean DEFAULT false NOT NULL,
+    terms_version character varying(20) DEFAULT '1.0'::character varying NOT NULL,
+    terms_accepted_at timestamp with time zone,
+    terms_ip_address character varying(45),
+    terms_user_agent text
 );
 
 
@@ -492,6 +572,20 @@ CREATE TABLE public.subscription_plans (
 
 
 --
+-- Name: tutor_activation_tokens; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.tutor_activation_tokens (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    tutor_id uuid NOT NULL,
+    token_hash character varying(255) NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    used_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP
+);
+
+
+--
 -- Name: tutor_legal_consents; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -505,7 +599,10 @@ CREATE TABLE public.tutor_legal_consents (
     accepted_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
     id_document_type character varying(30),
     id_document_number character varying(50),
-    id_document_file_url character varying(500)
+    id_document_file_url character varying(500),
+    relationship_type character varying(30) DEFAULT 'PARENT'::character varying NOT NULL,
+    selfie_file_url text,
+    representation_document_file_url text
 );
 
 
@@ -540,7 +637,8 @@ CREATE TABLE public.users (
     is_profile_completed boolean DEFAULT true NOT NULL,
     country character varying(100),
     state character varying(100),
-    address character varying(255)
+    address character varying(255),
+    deleted_at timestamp with time zone
 );
 
 
@@ -564,6 +662,14 @@ CREATE TABLE public.verifier_delegates (
 
 ALTER TABLE ONLY public.athlete_badges
     ADD CONSTRAINT athlete_badges_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: athlete_legal_consents athlete_legal_consents_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.athlete_legal_consents
+    ADD CONSTRAINT athlete_legal_consents_pkey PRIMARY KEY (id);
 
 
 --
@@ -596,6 +702,14 @@ ALTER TABLE ONLY public.athletes
 
 ALTER TABLE ONLY public.athletes
     ADD CONSTRAINT athletes_slug_key UNIQUE (slug);
+
+
+--
+-- Name: bulk_import_jobs bulk_import_jobs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.bulk_import_jobs
+    ADD CONSTRAINT bulk_import_jobs_pkey PRIMARY KEY (id);
 
 
 --
@@ -735,6 +849,22 @@ ALTER TABLE ONLY public.subscription_plans
 
 
 --
+-- Name: tutor_activation_tokens tutor_activation_tokens_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tutor_activation_tokens
+    ADD CONSTRAINT tutor_activation_tokens_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: tutor_activation_tokens tutor_activation_tokens_token_hash_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tutor_activation_tokens
+    ADD CONSTRAINT tutor_activation_tokens_token_hash_key UNIQUE (token_hash);
+
+
+--
 -- Name: tutor_legal_consents tutor_legal_consents_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -799,6 +929,20 @@ ALTER TABLE ONLY public.verifier_delegates
 
 
 --
+-- Name: idx_athlete_legal_consents_athlete; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_athlete_legal_consents_athlete ON public.athlete_legal_consents USING btree (athlete_id);
+
+
+--
+-- Name: idx_athlete_legal_consents_user; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_athlete_legal_consents_user ON public.athlete_legal_consents USING btree (user_id);
+
+
+--
 -- Name: idx_athletes_filter; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -824,6 +968,20 @@ CREATE INDEX idx_athletes_slug ON public.athletes USING btree (slug);
 --
 
 CREATE INDEX idx_badges_athlete ON public.athlete_badges USING btree (athlete_id, status);
+
+
+--
+-- Name: idx_bulk_import_jobs_scout; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_bulk_import_jobs_scout ON public.bulk_import_jobs USING btree (scout_id);
+
+
+--
+-- Name: idx_bulk_import_jobs_status; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_bulk_import_jobs_status ON public.bulk_import_jobs USING btree (status);
 
 
 --
@@ -939,6 +1097,13 @@ CREATE INDEX idx_scout_activity ON public.scout_activity_logs USING btree (athle
 
 
 --
+-- Name: idx_tutor_activation_tokens_hash; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_tutor_activation_tokens_hash ON public.tutor_activation_tokens USING btree (token_hash);
+
+
+--
 -- Name: idx_user_social_identities_provider_email; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -981,6 +1146,22 @@ ALTER TABLE ONLY public.athlete_badges
 
 ALTER TABLE ONLY public.athlete_badges
     ADD CONSTRAINT athlete_badges_verified_by_user_id_fkey FOREIGN KEY (verified_by_user_id) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: athlete_legal_consents athlete_legal_consents_athlete_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.athlete_legal_consents
+    ADD CONSTRAINT athlete_legal_consents_athlete_id_fkey FOREIGN KEY (athlete_id) REFERENCES public.athletes(id) ON DELETE CASCADE;
+
+
+--
+-- Name: athlete_legal_consents athlete_legal_consents_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.athlete_legal_consents
+    ADD CONSTRAINT athlete_legal_consents_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
 
 
 --
@@ -1029,6 +1210,22 @@ ALTER TABLE ONLY public.athletes
 
 ALTER TABLE ONLY public.athletes
     ADD CONSTRAINT athletes_tutor_id_fkey FOREIGN KEY (tutor_id) REFERENCES public.users(id) ON DELETE CASCADE;
+
+
+--
+-- Name: bulk_import_jobs bulk_import_jobs_club_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.bulk_import_jobs
+    ADD CONSTRAINT bulk_import_jobs_club_id_fkey FOREIGN KEY (club_id) REFERENCES public.clubs_organizations(id) ON DELETE SET NULL;
+
+
+--
+-- Name: bulk_import_jobs bulk_import_jobs_scout_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.bulk_import_jobs
+    ADD CONSTRAINT bulk_import_jobs_scout_id_fkey FOREIGN KEY (scout_id) REFERENCES public.users(id) ON DELETE CASCADE;
 
 
 --
@@ -1200,6 +1397,14 @@ ALTER TABLE ONLY public.scout_profiles
 
 
 --
+-- Name: tutor_activation_tokens tutor_activation_tokens_tutor_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tutor_activation_tokens
+    ADD CONSTRAINT tutor_activation_tokens_tutor_id_fkey FOREIGN KEY (tutor_id) REFERENCES public.users(id) ON DELETE CASCADE;
+
+
+--
 -- Name: tutor_legal_consents tutor_legal_consents_tutor_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -1257,4 +1462,9 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261026190000'),
     ('20261027120000'),
     ('20261027150000'),
-    ('20261030103000');
+    ('20261030103000'),
+    ('20261103103000'),
+    ('20261106140000'),
+    ('20261106220000'),
+    ('20261109120000'),
+    ('20261112092325');
