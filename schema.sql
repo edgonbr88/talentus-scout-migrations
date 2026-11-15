@@ -87,7 +87,8 @@ CREATE TYPE public.payment_method AS ENUM (
     'BINANCE_PAY',
     'ZINLI_WALLY_ZELLE',
     'STRIPE',
-    'DISCOUNT_CODE'
+    'DISCOUNT_CODE',
+    'ZELLE'
 );
 
 
@@ -397,7 +398,11 @@ CREATE TABLE public.payment_gateway_settings (
     binance_network character varying(50) DEFAULT 'USDT (TRC-20 / BEP-20)'::character varying,
     binance_qr_image_url character varying(255),
     created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
-    updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP
+    updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
+    zelle_enabled boolean DEFAULT true NOT NULL,
+    zelle_email character varying(150) DEFAULT 'pagos@talentusscout.com'::character varying,
+    zelle_account_holder character varying(150) DEFAULT 'Talentus Scout LLC'::character varying,
+    zelle_qr_image_url character varying(255)
 );
 
 
@@ -469,7 +474,16 @@ CREATE TABLE public.scout_profiles (
     reviewed_by_admin_id uuid,
     reviewed_at timestamp with time zone,
     rejection_reason text,
-    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP
+    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
+    id_document_type character varying(30),
+    id_document_number character varying(50),
+    id_document_url text,
+    selfie_url text,
+    accepted_terms boolean DEFAULT false NOT NULL,
+    terms_version character varying(20) DEFAULT '1.0'::character varying NOT NULL,
+    terms_accepted_at timestamp with time zone,
+    terms_ip_address character varying(45),
+    terms_user_agent text
 );
 
 
@@ -505,7 +519,10 @@ CREATE TABLE public.tutor_legal_consents (
     accepted_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
     id_document_type character varying(30),
     id_document_number character varying(50),
-    id_document_file_url character varying(500)
+    id_document_file_url character varying(500),
+    relationship_type character varying(30) DEFAULT 'PARENT'::character varying NOT NULL,
+    selfie_file_url text,
+    representation_document_file_url text
 );
 
 
@@ -1257,4 +1274,7 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261026190000'),
     ('20261027120000'),
     ('20261027150000'),
-    ('20261030103000');
+    ('20261030103000'),
+    ('20261103103000'),
+    ('20261106140000'),
+    ('20261106220000');
