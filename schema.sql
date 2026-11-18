@@ -112,7 +112,8 @@ CREATE TYPE public.payment_method AS ENUM (
     'ZINLI_WALLY_ZELLE',
     'STRIPE',
     'DISCOUNT_CODE',
-    'ZELLE'
+    'ZELLE',
+    'VEXPAY'
 );
 
 
@@ -124,7 +125,9 @@ CREATE TYPE public.payment_status AS ENUM (
     'PENDING_AUDIT',
     'APPROVED',
     'REJECTED',
-    'AUTO_CONFIRMED'
+    'AUTO_CONFIRMED',
+    'PENDING_GATEWAY',
+    'REVERSED'
 );
 
 
@@ -469,7 +472,8 @@ CREATE TABLE public.payment_gateway_settings (
     zelle_enabled boolean DEFAULT true NOT NULL,
     zelle_email character varying(150) DEFAULT 'pagos@talentusscout.com'::character varying,
     zelle_account_holder character varying(150) DEFAULT 'Talentus Scout LLC'::character varying,
-    zelle_qr_image_url character varying(255)
+    zelle_qr_image_url character varying(255),
+    vexpay_enabled boolean DEFAULT true NOT NULL
 );
 
 
@@ -499,7 +503,12 @@ CREATE TABLE public.payment_transactions (
     gateway_order_id character varying(100),
     raw_webhook_payload text,
     discount_code_id uuid,
-    discount_amount_usd numeric(10,2) DEFAULT 0.00
+    discount_amount_usd numeric(10,2) DEFAULT 0.00,
+    vexpay_session_id character varying(120),
+    vexpay_payment_id character varying(120),
+    vexpay_sub_method character varying(50),
+    applied_subscription_id uuid,
+    previous_subscription_end_date timestamp with time zone
 );
 
 
@@ -655,6 +664,20 @@ CREATE TABLE public.verifier_delegates (
     position_title character varying(100) NOT NULL,
     is_active boolean DEFAULT true NOT NULL,
     created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP
+);
+
+
+--
+-- Name: vexpay_webhook_events; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.vexpay_webhook_events (
+    id uuid DEFAULT public.uuid_generate_v7() NOT NULL,
+    event_id character varying(120) NOT NULL,
+    event_type character varying(80) NOT NULL,
+    livemode boolean DEFAULT false NOT NULL,
+    payload text NOT NULL,
+    processed_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP
 );
 
 
@@ -931,6 +954,22 @@ ALTER TABLE ONLY public.verifier_delegates
 
 
 --
+-- Name: vexpay_webhook_events vexpay_webhook_events_event_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.vexpay_webhook_events
+    ADD CONSTRAINT vexpay_webhook_events_event_id_key UNIQUE (event_id);
+
+
+--
+-- Name: vexpay_webhook_events vexpay_webhook_events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.vexpay_webhook_events
+    ADD CONSTRAINT vexpay_webhook_events_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: idx_athlete_legal_consents_athlete; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -1075,6 +1114,20 @@ CREATE INDEX idx_payment_tx_gateway_order ON public.payment_transactions USING b
 --
 
 CREATE INDEX idx_payment_tx_method_status ON public.payment_transactions USING btree (method, status);
+
+
+--
+-- Name: idx_payment_tx_vexpay_payment; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_payment_tx_vexpay_payment ON public.payment_transactions USING btree (vexpay_payment_id);
+
+
+--
+-- Name: idx_payment_tx_vexpay_session; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_payment_tx_vexpay_session ON public.payment_transactions USING btree (vexpay_session_id);
 
 
 --
@@ -1319,6 +1372,14 @@ ALTER TABLE ONLY public.password_reset_tokens
 
 
 --
+-- Name: payment_transactions payment_transactions_applied_subscription_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.payment_transactions
+    ADD CONSTRAINT payment_transactions_applied_subscription_id_fkey FOREIGN KEY (applied_subscription_id) REFERENCES public.athlete_subscriptions(id) ON DELETE SET NULL;
+
+
+--
 -- Name: payment_transactions payment_transactions_athlete_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -1471,4 +1532,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261109120000'),
     ('20261112092325'),
     ('20261112111949'),
-    ('20261116120000');
+    ('20261116120000'),
+    ('20261117225500');
