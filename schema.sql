@@ -308,7 +308,8 @@ CREATE TABLE public.athletes (
     legal_verification_notes text,
     legal_verified_by uuid,
     legal_verified_at timestamp with time zone,
-    deleted_at timestamp with time zone
+    deleted_at timestamp with time zone,
+    CONSTRAINT chk_athletes_birth_date_past CHECK (((birth_date < CURRENT_DATE) OR (deleted_at IS NOT NULL)))
 );
 
 
@@ -1533,4 +1534,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261112092325'),
     ('20261112111949'),
     ('20261116120000'),
-    ('20261117225500');
+    ('20261117225500'),
+    ('20261118220000');
