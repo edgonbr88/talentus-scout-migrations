@@ -566,6 +566,25 @@ CREATE TABLE public.scout_profiles (
 
 
 --
+-- Name: scout_technical_analyses; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.scout_technical_analyses (
+    id uuid DEFAULT public.uuid_generate_v7() NOT NULL,
+    athlete_id uuid NOT NULL,
+    scout_id uuid NOT NULL,
+    strengths jsonb NOT NULL,
+    improvement_areas jsonb NOT NULL,
+    scouting_verdict text NOT NULL,
+    created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    CONSTRAINT chk_scout_tech_analyses_improvements_array CHECK (((jsonb_typeof(improvement_areas) = 'array'::text) AND (jsonb_array_length(improvement_areas) >= 1))),
+    CONSTRAINT chk_scout_tech_analyses_strengths_array CHECK (((jsonb_typeof(strengths) = 'array'::text) AND (jsonb_array_length(strengths) >= 1))),
+    CONSTRAINT chk_scout_tech_analyses_verdict_nonempty CHECK ((length(TRIM(BOTH FROM scouting_verdict)) > 0))
+);
+
+
+--
 -- Name: subscription_plans; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -867,6 +886,14 @@ ALTER TABLE ONLY public.scout_profiles
 
 
 --
+-- Name: scout_technical_analyses scout_technical_analyses_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scout_technical_analyses
+    ADD CONSTRAINT scout_technical_analyses_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: subscription_plans subscription_plans_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -904,6 +931,14 @@ ALTER TABLE ONLY public.tutor_legal_consents
 
 ALTER TABLE ONLY public.verifier_delegates
     ADD CONSTRAINT unique_user_org UNIQUE (user_id, organization_id);
+
+
+--
+-- Name: scout_technical_analyses uq_scout_technical_analyses_athlete_scout; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scout_technical_analyses
+    ADD CONSTRAINT uq_scout_technical_analyses_athlete_scout UNIQUE (athlete_id, scout_id);
 
 
 --
@@ -1150,6 +1185,20 @@ CREATE INDEX idx_redemptions_user ON public.discount_code_redemptions USING btre
 --
 
 CREATE INDEX idx_scout_activity ON public.scout_activity_logs USING btree (athlete_id, created_at DESC);
+
+
+--
+-- Name: idx_scout_tech_analyses_athlete; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_scout_tech_analyses_athlete ON public.scout_technical_analyses USING btree (athlete_id, updated_at DESC);
+
+
+--
+-- Name: idx_scout_tech_analyses_scout; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_scout_tech_analyses_scout ON public.scout_technical_analyses USING btree (scout_id);
 
 
 --
@@ -1461,6 +1510,22 @@ ALTER TABLE ONLY public.scout_profiles
 
 
 --
+-- Name: scout_technical_analyses scout_technical_analyses_athlete_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scout_technical_analyses
+    ADD CONSTRAINT scout_technical_analyses_athlete_id_fkey FOREIGN KEY (athlete_id) REFERENCES public.athletes(id) ON DELETE CASCADE;
+
+
+--
+-- Name: scout_technical_analyses scout_technical_analyses_scout_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.scout_technical_analyses
+    ADD CONSTRAINT scout_technical_analyses_scout_id_fkey FOREIGN KEY (scout_id) REFERENCES public.users(id) ON DELETE CASCADE;
+
+
+--
 -- Name: tutor_activation_tokens tutor_activation_tokens_tutor_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -1535,4 +1600,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261112111949'),
     ('20261116120000'),
     ('20261117225500'),
-    ('20261118220000');
+    ('20261118220000'),
+    ('20261120100000');
