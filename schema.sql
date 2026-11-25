@@ -1027,6 +1027,27 @@ CREATE INDEX idx_athletes_filter ON public.athletes USING btree (birth_date, pri
 
 
 --
+-- Name: idx_athletes_first_name_lower; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_athletes_first_name_lower ON public.athletes USING btree (lower((first_name)::text));
+
+
+--
+-- Name: idx_athletes_height_cm; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_athletes_height_cm ON public.athletes USING btree (height_cm) WHERE ((deleted_at IS NULL) AND (height_cm IS NOT NULL));
+
+
+--
+-- Name: idx_athletes_last_name_lower; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_athletes_last_name_lower ON public.athletes USING btree (lower((last_name)::text));
+
+
+--
 -- Name: idx_athletes_legal_verification_status; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -1038,6 +1059,13 @@ CREATE INDEX idx_athletes_legal_verification_status ON public.athletes USING btr
 --
 
 CREATE INDEX idx_athletes_slug ON public.athletes USING btree (slug);
+
+
+--
+-- Name: idx_athletes_weight_kg; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_athletes_weight_kg ON public.athletes USING btree (weight_kg) WHERE ((deleted_at IS NULL) AND (weight_kg IS NOT NULL));
 
 
 --
@@ -1080,6 +1108,13 @@ CREATE INDEX idx_cert_req_status ON public.certification_requests USING btree (s
 --
 
 CREATE INDEX idx_cert_req_token ON public.certification_requests USING btree (token_hash);
+
+
+--
+-- Name: idx_clubs_organizations_name_lower; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_clubs_organizations_name_lower ON public.clubs_organizations USING btree (lower((name)::text));
 
 
 --
@@ -1601,4 +1636,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261116120000'),
     ('20261117225500'),
     ('20261118220000'),
-    ('20261120100000');
+    ('20261120100000'),
+    ('20261123130000');
